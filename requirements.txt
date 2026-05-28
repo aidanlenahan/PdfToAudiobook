@@ -1,34 +1,38 @@
-# Core — PDF extraction + classification
-PyMuPDF>=1.23.0
-jenkspy>=0.3.3
-
-# TTS + audio
-# -----------------------------------------------------------------------
-# NOTE: The original "TTS" package (Coqui) was abandoned and only supports
-# Python <=3.11.  Use the community fork "coqui-tts" instead — same API,
-# same imports (from TTS.api import TTS), supports Python 3.9-3.14.
+# PdfToAudiobook — Python dependencies
 #
-# Install order matters: torch + torchaudio must come before coqui-tts
-# because coqui-tts 0.27.4+ no longer bundles PyTorch.
+# ┌─ RECOMMENDED INSTALL ──────────────────────────────────────────────────────┐
+# │  python install.py                                                          │
+# │                                                                             │
+# │  The installer auto-detects your OS/GPU and picks the right PyTorch        │
+# │  variant (CPU / CUDA / MPS) before installing everything else.              │
+# └─────────────────────────────────────────────────────────────────────────────┘
 #
+# Manual CPU-only fallback (all platforms):
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r requirements.txt
 #
-# For CUDA GPU acceleration instead of CPU, replace the index URL with:
-#   https://download.pytorch.org/whl/cu121   (or cu118, cu124, etc.)
-# -----------------------------------------------------------------------
-torch>=2.0.0
-torchaudio>=2.0.0
-# transformers must stay on 4.x — coqui-tts uses an internal symbol
-# (isin_mps_friendly) that was removed in transformers 5.0.
+# torch and torchaudio are intentionally NOT listed here — they must be
+# installed first with the correct platform URL (see above / install.py).
+# If coqui-tts finds torch already present it will not overwrite it.
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+PyMuPDF>=1.23.0
+jenkspy>=0.3.3
+
+# ── TTS ───────────────────────────────────────────────────────────────────────
+# coqui-tts: community fork of the abandoned TTS package; Python 3.9–3.14.
+#   Same API: from TTS.api import TTS
+# [codec] extra installs torchcodec, required for audio I/O with torch >= 2.9.
+# transformers pinned to 4.x — coqui-tts internally uses isin_mps_friendly
+#   which was removed in transformers 5.0.
 transformers>=4.40.0,<5.0.0
 coqui-tts[codec]>=0.25.0
 pydub>=0.25.1
 
-# EPUB support
+# ── EPUB ──────────────────────────────────────────────────────────────────────
 ebooklib>=0.18
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 
-# CLI interface
+# ── CLI ───────────────────────────────────────────────────────────────────────
 rich>=13.7.0
