@@ -1,0 +1,16 @@
+# Core — PDF extraction + classification
+PyMuPDF>=1.23.0
+jenkspy>=0.3.3
+
+# TTS + audio
+TTS>=0.22.0
+pydub>=0.25.1
+torch>=2.0.0
+
+# EPUB support
+ebooklib>=0.18
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# CLI interface
+rich>=13.7.0
