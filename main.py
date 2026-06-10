@@ -45,7 +45,7 @@ def _make_progress(**kwargs) -> Progress:
     """Standard progress bar used everywhere in the app."""
     return Progress(
         SpinnerColumn(),
-        TextColumn("[cyan]{task.description}[/cyan]", table_column={"no_wrap": True}),
+        TextColumn("[cyan]{task.description}[/cyan]"),
         BarColumn(bar_width=36),
         MofNCompleteColumn(),
         TaskProgressColumn(),
