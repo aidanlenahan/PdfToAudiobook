@@ -76,6 +76,18 @@ def _banner():
     console.print()
 
 
+def _confirm_quit() -> None:
+    """Ask for confirmation, then exit.  A second Ctrl-C also confirms."""
+    console.print()
+    try:
+        ans = Prompt.ask("  [yellow]Quit?[/yellow]", choices=["y", "n"], default="n")
+    except (KeyboardInterrupt, EOFError):
+        ans = "y"
+    if ans.lower() == "y":
+        console.print("\n  [dim]Goodbye![/dim]\n")
+        sys.exit(0)
+
+
 def _menu(title: str, options: list) -> int:
     t = Table(
         box=box.ROUNDED, border_style="blue",
@@ -85,12 +97,21 @@ def _menu(title: str, options: list) -> int:
     t.add_column("label", style="white")
     for i, opt in enumerate(options, 1):
         t.add_row(f"[{i}]", opt)
+    t.add_row("", "")
+    t.add_row("[q]", "[dim]Quit[/dim]")
     console.print(Panel(t, title=f"[bold]{title}[/bold]", border_style="blue"))
     while True:
-        raw = Prompt.ask("\n  [cyan]Enter choice[/cyan]").strip()
+        try:
+            raw = Prompt.ask("\n  [cyan]Enter choice[/cyan]").strip()
+        except (KeyboardInterrupt, EOFError):
+            _confirm_quit()
+            continue
+        if raw.lower() == "q":
+            _confirm_quit()
+            continue
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return int(raw)
-        console.print(f"  [red]Please enter a number between 1 and {len(options)}.[/red]")
+        console.print(f"  [red]Please enter a number between 1 and {len(options)}, or q to quit.[/red]")
 
 
 def _pick_file() -> Path:
@@ -108,13 +129,20 @@ def _pick_file() -> Path:
         for i, f in enumerate(files, 1):
             t.add_row(str(i), f.name, f.suffix.upper().lstrip("."))
         console.print(Panel(t, title="[bold]Books in Current Directory[/bold]", border_style="blue"))
-        console.print("  [dim]Enter a number, or type a full path.[/dim]\n")
+        console.print("  [dim]Enter a number, type a full path, or [bold]q[/bold] to quit.[/dim]\n")
     else:
         console.print("  [yellow]No supported books found in current directory.[/yellow]")
-        console.print("  [dim]Type the full path to your book file.[/dim]\n")
+        console.print("  [dim]Type the full path to your book file, or [bold]q[/bold] to quit.[/dim]\n")
 
     while True:
-        raw = Prompt.ask("  [cyan]Select file[/cyan]").strip().strip('"').strip("'")
+        try:
+            raw = Prompt.ask("  [cyan]Select file[/cyan]").strip().strip('"').strip("'")
+        except (KeyboardInterrupt, EOFError):
+            _confirm_quit()
+            continue
+        if raw.lower() == "q":
+            _confirm_quit()
+            continue
         if raw.isdigit() and files and 1 <= int(raw) <= len(files):
             return files[int(raw) - 1]
         p = Path(raw)
@@ -500,12 +528,17 @@ def _ffmpeg_progress(cmd: list, total_s: float, label: str) -> tuple:
 
     safe_total = max(total_s, 1.0)
 
-    with _make_progress() as bar:
-        task = bar.add_task(label, total=safe_total)
-        while proc.poll() is None:
-            bar.update(task, completed=min(completed[0], safe_total))
-            time.sleep(0.15)
-        bar.update(task, completed=safe_total)
+    try:
+        with _make_progress() as bar:
+            task = bar.add_task(label, total=safe_total)
+            while proc.poll() is None:
+                bar.update(task, completed=min(completed[0], safe_total))
+                time.sleep(0.15)
+            bar.update(task, completed=safe_total)
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+        raise
 
     reader.join(timeout=2)
     stderr = proc.stderr.read()
@@ -634,33 +667,41 @@ def generate_audio(
                 )
 
             # Synthesise each outstanding block
-            for i, block in to_do:
-                label  = block.get("label", "body")
-                chunks = _split_text(block["text"])
-                tmp_files = []
+            try:
+                for i, block in to_do:
+                    label  = block.get("label", "body")
+                    chunks = _split_text(block["text"])
+                    tmp_files = []
 
-                for j, chunk in enumerate(chunks):
-                    tmp = output_dir / f"_{tag}b{i:04d}_c{j:03d}.wav"
-                    tts.tts_to_file(
-                        text=chunk,
-                        file_path=str(tmp),
-                        speaker="Adde Michal",
-                        language="en",
-                    )
-                    tmp_files.append(tmp)
+                    for j, chunk in enumerate(chunks):
+                        tmp = output_dir / f"_{tag}b{i:04d}_c{j:03d}.wav"
+                        tts.tts_to_file(
+                            text=chunk,
+                            file_path=str(tmp),
+                            speaker="Adde Michal",
+                            language="en",
+                        )
+                        tmp_files.append(tmp)
 
-                # Merge TTS chunks into one block WAV (pydub handles micro-pauses)
-                block_audio = AudioSegment.silent(0)
-                for ci, cf in enumerate(tmp_files):
-                    seg   = AudioSegment.from_wav(str(cf))
-                    pause = PAUSES_MS.get(label, 200) if ci == len(tmp_files) - 1 else 50
-                    block_audio = block_audio + seg + AudioSegment.silent(pause)
-                    cf.unlink()
+                    # Merge TTS chunks into one block WAV (pydub handles micro-pauses)
+                    block_audio = AudioSegment.silent(0)
+                    for ci, cf in enumerate(tmp_files):
+                        seg   = AudioSegment.from_wav(str(cf))
+                        pause = PAUSES_MS.get(label, 200) if ci == len(tmp_files) - 1 else 50
+                        block_audio = block_audio + seg + AudioSegment.silent(pause)
+                        cf.unlink()
 
-                block_audio.export(str(block_wavs[i]), format="wav")
+                    block_audio.export(str(block_wavs[i]), format="wav")
 
-                bar.advance(part_task)
-                bar.advance(overall_task)
+                    bar.advance(part_task)
+                    bar.advance(overall_task)
+
+            except KeyboardInterrupt:
+                bar.print(
+                    "\n  [yellow]Interrupted.[/yellow]  "
+                    "Synthesised blocks are saved — run again to resume."
+                )
+                raise
 
             # Assemble all block WAVs → part WAV
             bar.update(overall_task, description=f"[bold white]Assembling {part_name}…[/bold white]")
@@ -896,23 +937,27 @@ def _flow_join():
 # ─────────────────────────────── Entry point ──────────────────────────────────
 
 def main():
-    while True:
-        _banner()
-        choice = _menu(
-            "MAIN MENU",
-            [
-                "Convert Book to Audiobook",
-                "Join Audio Parts  →  MP3",
-                "Exit",
-            ],
-        )
-        if choice == 1:
-            _flow_convert()
-        elif choice == 2:
-            _flow_join()
-        else:
-            console.print("\n  [dim]Goodbye![/dim]\n")
-            break
+    try:
+        while True:
+            _banner()
+            choice = _menu(
+                "MAIN MENU",
+                [
+                    "Convert Book to Audiobook",
+                    "Join Audio Parts  →  MP3",
+                    "Exit",
+                ],
+            )
+            if choice == 1:
+                _flow_convert()
+            elif choice == 2:
+                _flow_join()
+            else:
+                console.print("\n  [dim]Goodbye![/dim]\n")
+                break
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n\n  [dim]Goodbye![/dim]\n")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
