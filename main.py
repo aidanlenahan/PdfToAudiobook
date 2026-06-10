@@ -254,10 +254,14 @@ def _classify_pdf(blocks: list) -> list:
             "  [yellow]Font-size variance too low for auto-classification; "
             "treating all blocks as body text.[/yellow]"
         )
-        for b in blocks:
-            b["label"] = "body"
+        with _make_progress() as bar:
+            task = bar.add_task(f"Labelling {len(blocks)} blocks", total=len(blocks))
+            for b in blocks:
+                b["label"] = "body"
+                bar.advance(task)
         return blocks
 
+    # Jenks break computation is instant even for large block sets
     breaks = jenkspy.jenks_breaks(sizes, n_classes=4)
 
     def label(s):
@@ -266,8 +270,11 @@ def _classify_pdf(blocks: list) -> list:
         if s < breaks[3]: return "body"
         return "header"
 
-    for b in blocks:
-        b["label"] = label(b["avg_font_size"])
+    with _make_progress() as bar:
+        task = bar.add_task(f"Classifying {len(blocks)} blocks by font size", total=len(blocks))
+        for b in blocks:
+            b["label"] = label(b["avg_font_size"])
+            bar.advance(task)
 
     # Warn if Jenks accidentally silences most of the book
     narrated = sum(1 for b in blocks if b["label"] != "other")
@@ -281,8 +288,11 @@ def _classify_pdf(blocks: list) -> list:
             "  [yellow]Override: treat all blocks as body text?[/yellow]",
             default=True,
         ):
-            for b in blocks:
-                b["label"] = "body"
+            with _make_progress() as bar:
+                task = bar.add_task(f"Overriding {len(blocks)} blocks", total=len(blocks))
+                for b in blocks:
+                    b["label"] = "body"
+                    bar.advance(task)
 
     return blocks
 
@@ -804,8 +814,7 @@ def _flow_convert():
             return
 
         if source_fmt == "pdf":
-            with console.status("[cyan]Classifying text blocks by font size…[/cyan]"):
-                blocks = _classify_pdf(blocks)
+            blocks = _classify_pdf(blocks)
 
         classified_json.write_text(
             json.dumps(blocks, ensure_ascii=False, indent=2),
