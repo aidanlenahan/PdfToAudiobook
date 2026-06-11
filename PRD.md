@@ -110,7 +110,7 @@ All interaction is driven from this menu. No source-code editing required.
 
 ### 5.2 File picker (implemented)
 
-On entering the Convert flow, the script scans the current working directory for supported files and presents a numbered list:
+On entering the Convert flow, the script scans the configured **input directory** (`input_dir`, default `input/`) for supported files and presents a numbered list:
 
 ```
   #    Filename                        Type
@@ -347,6 +347,7 @@ their default with a warning. Bad config never crashes the app.
 |---|---|---|
 | `default_engine` | *(blank = ask)* | `piper` / `xtts` |
 | `default_voice` | *(blank = ask)* | Piper voice key |
+| `input_dir` | `input` | folder the picker lists books from; blank = `input/` |
 | `output_dir` | `output` | base output dir; blank = ask each run |
 | `audio_format` | `mp3` | `mp3` / `flac` |
 | `mp3_bitrate` | `192k` | `128k` / `192k` / `320k` |
@@ -379,14 +380,25 @@ Piper is ~40× faster. The chosen engine/voice/speed are saved per book in
 
 ---
 
-### 5.14 Configurable output directory (implemented)
+### 5.14 Configurable input & output directories (implemented)
 
-Output goes to `<output_dir>/<book name>/` (default `output/<book name>/`). If
-`output_dir` is blank, the user is prompted each run (default `output`). The base
-directory is created with **error handling**: permission errors and invalid/
-nonexistent paths produce a friendly message and return to the menu rather than a
-traceback. A write-probe confirms the directory is actually writable before
-generation begins.
+**Input** (`input_dir`, default `input`): the file picker lists supported books
+from this folder (users drop files there). Blank → `input/`. The user can still
+type a full path to any file.
+
+**Output** (`output_dir`, default `output`): audio goes to
+`<output_dir>/<book name>/`. Blank → the user is prompted each run (default
+`output`).
+
+**Directory policy (shared by input & output):**
+- The **default** `input/` / `output/` folders are **auto-created** if missing.
+- A **custom** folder that doesn't exist produces a friendly error and returns to
+  the menu — it is *not* silently created.
+- Non-directory paths and permission errors are reported cleanly (output is
+  write-probed before generation). No raw tracebacks.
+
+**First run:** if `prefs.json` doesn't exist, the app prints *"No user
+preferences detected — starting from scratch"* and writes a default `prefs.json`.
 
 ---
 
@@ -552,7 +564,8 @@ Legacy scripts (`extract_text.py`, `classify.py`, `tts.py`, `join_audios.py`) we
 - [x] Add Piper as a fast, CPU-friendly engine alongside XTTS (runtime choice)
 - [x] Voice selection — 8 curated Piper voices + any catalog key
 - [x] Settings menu (option [3]) backed by `prefs.json` with inline `_help`
-- [x] Configurable output directory (`output/<book>/`) with error handling
+- [x] Configurable input & output directories (`input/`, `output/<book>/`) with
+      create-default / error-on-missing-custom policy and a first-run setup message
 - [x] Configurable audio format/quality (MP3 128/192/320, FLAC)
 - [x] Narration speed and per-block pause durations as prefs
 - [x] User-defined split points for EPUB (chapter) and Markdown (heading section)
