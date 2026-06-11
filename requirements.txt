@@ -19,12 +19,17 @@
 PyMuPDF>=1.23.0
 jenkspy>=0.3.3
 
-# ── TTS ───────────────────────────────────────────────────────────────────────
-# coqui-tts: community fork of the abandoned TTS package; Python 3.9–3.14.
-#   Same API: from TTS.api import TTS
-# [codec] extra installs torchcodec, required for audio I/O with torch >= 2.9.
-# transformers pinned to 4.x — coqui-tts internally uses isin_mps_friendly
-#   which was removed in transformers 5.0.
+# ── TTS engines ─────────────────────────────────────────────────────────────────
+# Two engines; pick one at runtime when converting:
+#   • Piper  — fast, runs faster than real-time on CPU. Recommended without a GPU.
+#              Self-contained abi3 wheels (Python 3.9+); bundles espeak phonemizer.
+#              Voice models (~60 MB) download on first use to ~/.cache/pdftoaudiobook.
+#   • XTTS   — Coqui XTTS v2, highest quality / most natural, but slow on CPU.
+#              coqui-tts is the community fork of the abandoned TTS package.
+#              [codec] installs torchcodec (audio I/O for torch >= 2.9).
+#              transformers pinned <5.0 — coqui-tts uses isin_mps_friendly,
+#              removed in transformers 5.0.
+piper-tts>=1.4.0
 transformers>=4.40.0,<5.0.0
 coqui-tts[codec]>=0.25.0
 pydub>=0.25.1
