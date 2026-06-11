@@ -89,9 +89,15 @@ PREFS_SCHEMA = {
     "default_voice":    ("",        "Piper voice used without asking (only when engine is piper). "
                                     "Blank = ask every run. e.g. en_US-amy-medium.",
                                     "voice"),
-    "output_dir":       ("output",  "Folder that holds generated audiobooks; a per-book subfolder "
-                                    "is created inside it. Blank = ask every run. Relative paths "
+    "input_dir":        ("input",   "Folder to look for books in (drop your files here). Blank "
+                                    "uses input/. The default input/ folder is created if missing; "
+                                    "a custom folder that doesn't exist is an error. Relative paths "
                                     "are taken from where you run the app.",
+                                    "path"),
+    "output_dir":       ("output",  "Folder that holds generated audiobooks; a per-book subfolder "
+                                    "is created inside it. Blank = ask every run. The default "
+                                    "output/ folder is created if missing; a custom folder that "
+                                    "doesn't exist is an error. Relative paths are from the app dir.",
                                     "path"),
     "audio_format":     ("mp3",     "Format of the final joined file.", ["mp3", "flac"]),
     "mp3_bitrate":      ("192k",    "MP3 quality (ignored for FLAC). Higher = larger, better.",
@@ -412,12 +418,16 @@ def _menu(title: str, options: list) -> int:
         console.print(f"  [red]Please enter a number between 1 and {len(options)}, or q to quit.[/red]")
 
 
-def _pick_file() -> Path:
-    cwd   = Path.cwd()
-    files = sorted(
-        f for f in cwd.iterdir()
-        if f.is_file() and f.suffix.lower() in SUPPORTED_FORMATS
-    )
+def _pick_file(search_dir: Path | None = None) -> Path:
+    search_dir = search_dir or Path.cwd()
+    try:
+        files = sorted(
+            f for f in search_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in SUPPORTED_FORMATS
+        )
+    except OSError as e:
+        console.print(f"  [yellow]Could not read {search_dir}: {e}[/yellow]")
+        files = []
 
     if files:
         t = Table(box=box.SIMPLE_HEAD, border_style="dim", show_header=True, padding=(0, 2))
@@ -426,11 +436,11 @@ def _pick_file() -> Path:
         t.add_column("Type",     style="green", justify="center", width=7)
         for i, f in enumerate(files, 1):
             t.add_row(str(i), f.name, f.suffix.upper().lstrip("."))
-        console.print(Panel(t, title="[bold]Books in Current Directory[/bold]", border_style="blue"))
+        console.print(Panel(t, title=f"[bold]Books in {search_dir.name or search_dir}[/bold]", border_style="blue"))
         console.print("  [dim]Enter a number, type a full path, or [bold]q[/bold] to quit.[/dim]\n")
     else:
-        console.print("  [yellow]No supported books found in current directory.[/yellow]")
-        console.print("  [dim]Type the full path to your book file, or [bold]q[/bold] to quit.[/dim]\n")
+        console.print(f"  [yellow]No supported books found in {search_dir}.[/yellow]")
+        console.print("  [dim]Drop files in that folder, type a full path, or [bold]q[/bold] to quit.[/dim]\n")
 
     while True:
         try:
@@ -520,36 +530,83 @@ def ask_output_dir(default: str = "output") -> str:
         return raw or default
 
 
-def _safe_mkdir(path: Path) -> bool:
-    """Create a directory and confirm it is writable. Friendly errors, no crash."""
+def _is_writable(path: Path) -> bool:
+    """True if a small file can be written into *path*."""
     try:
-        path.mkdir(parents=True, exist_ok=True)
         probe = path / ".write_test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
         return True
+    except OSError:
+        return False
+
+
+def _safe_mkdir(path: Path) -> bool:
+    """Create a directory and confirm it is writable. Friendly errors, no crash."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
     except PermissionError:
-        console.print(
-            f"  [red]Permission denied:[/red] cannot write to [bold]{path}[/bold].\n"
-            f"  Pick a different folder (Settings → output_dir) or run with the right permissions."
-        )
+        console.print(f"  [red]Permission denied:[/red] cannot create [bold]{path}[/bold].")
+        return False
     except OSError as e:
+        console.print(f"  [red]Cannot create directory[/red] [bold]{path}[/bold]: {e}.")
+        return False
+    if not _is_writable(path):
+        console.print(f"  [red]Permission denied:[/red] cannot write to [bold]{path}[/bold].")
+        return False
+    return True
+
+
+def _prepare_dir(raw_value: str, default_name: str, *, need_write: bool, setting: str) -> Path | None:
+    """Resolve a base directory from a pref value, applying the create/error policy.
+
+    - blank → the default folder name (input/ or output/)
+    - the *default* folder is created automatically if missing
+    - a *custom* folder that does not exist is an error (we do not create it)
+    - validates it is a directory, and writable when need_write is True
+
+    Returns the resolved Path, or None (after printing a friendly error).
+    """
+    raw = (raw_value or "").strip() or default_name
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    is_default = p.resolve() == (Path.cwd() / default_name).resolve()
+
+    if not p.exists():
+        if is_default:
+            if not _safe_mkdir(p):
+                return None
+            console.print(f"  [dim]Created default '{default_name}/' folder: {p}[/dim]")
+        else:
+            console.print(
+                f"  [red]Directory does not exist:[/red] [bold]{p}[/bold].\n"
+                f"  Create it, or set a different path in Settings → {setting}."
+            )
+            return None
+    if not p.is_dir():
+        console.print(f"  [red]Not a directory:[/red] [bold]{p}[/bold]  (Settings → {setting}).")
+        return None
+    if need_write and not _is_writable(p):
         console.print(
-            f"  [red]Cannot use output directory[/red] [bold]{path}[/bold]: {e}.\n"
-            f"  Check the path (drive exists, name is valid) or change it in Settings."
+            f"  [red]Permission denied:[/red] cannot write to [bold]{p}[/bold].\n"
+            f"  Pick a different folder in Settings → {setting} or fix permissions."
         )
-    return False
+        return None
+    return p
 
 
 def _resolve_output_base(prefs: dict) -> Path | None:
-    """Return the base output dir from prefs, prompting if blank. None on cancel."""
-    base = (prefs.get("output_dir") or "").strip()
-    if not base:
-        base = ask_output_dir()
-    p = Path(base).expanduser()
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    return p
+    """Return the base output dir from prefs, prompting if blank. None on error."""
+    raw = (prefs.get("output_dir") or "").strip()
+    if not raw:
+        raw = ask_output_dir()
+    return _prepare_dir(raw, "output", need_write=True, setting="output_dir")
+
+
+def _resolve_input_dir(prefs: dict) -> Path | None:
+    """Return the input dir from prefs (blank → input/). None on error."""
+    return _prepare_dir(prefs.get("input_dir"), "input", need_write=False, setting="input_dir")
 
 
 def ask_break_points(total_units: int, unit_name: str = "page") -> list:
@@ -1410,11 +1467,15 @@ def _flow_convert():
 
     prefs = load_prefs()
 
-    path       = _pick_file()
+    input_dir  = _resolve_input_dir(prefs)   # None on error (message already shown)
+    path       = _pick_file(input_dir)
     book_name  = path.stem
     source_fmt = path.suffix.lower().lstrip(".")
 
     base = _resolve_output_base(prefs)
+    if base is None:
+        Prompt.ask("\n  Press Enter to return to menu")
+        return
     output_dir = base / book_name
     if not _safe_mkdir(output_dir):
         Prompt.ask("\n  Press Enter to return to menu")
@@ -1695,9 +1756,19 @@ def _report_error(exc: Exception) -> None:
 
 
 def main():
+    first_run = not PREFS_PATH.exists()
     try:
         while True:
             _banner()
+            if first_run:
+                console.print("  [yellow]No user preferences detected — starting from scratch.[/yellow]")
+                save_prefs(_default_prefs())
+                console.print(
+                    f"  [dim]Created default preferences at {PREFS_PATH}.[/dim]\n"
+                    f"  [dim]Drop books in [bold]input/[/bold]; audio is saved to [bold]output/[/bold]. "
+                    f"Customise via Settings (option 3).[/dim]\n"
+                )
+                first_run = False
             choice = _menu(
                 "MAIN MENU",
                 [
