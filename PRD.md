@@ -1,7 +1,7 @@
 # PdfToAudiobook — Product Requirements Document
 
-**Version:** 2.2.0  
-**Last updated:** 2026-06-10  
+**Version:** 2.3.0  
+**Last updated:** 2026-06-11  
 **Repository:** [aidanlenahan/PdfToAudiobook](https://github.com/aidanlenahan/PdfToAudiobook)  
 **Forked from:** [Estikno/PdfToAudiobook](https://github.com/Estikno/PdfToAudiobook)
 
@@ -9,9 +9,11 @@
 
 ## 1. Overview
 
-PdfToAudiobook is a **fully local, offline audiobook generator** that converts written books into narrated MP3 files using AI text-to-speech — no API keys, no cloud services, no per-use cost. It runs entirely on the user's machine using the Coqui XTTS v2 model.
+PdfToAudiobook is a **fully local, offline audiobook generator** that converts written books into narrated MP3/FLAC files using AI text-to-speech — no API keys, no cloud services, no per-use cost. It runs entirely on the user's machine.
 
-The product is a single Python script (`main.py`) with a rich terminal interface. It accepts PDF, EPUB, TXT, and Markdown files and produces one or more WAV audio parts that can be joined into a final MP3.
+It offers **two TTS engines, chosen at runtime**: **Piper** (fast neural TTS that runs several times faster than real-time on CPU) and **Coqui XTTS v2** (highest quality / most natural, but slow on CPU). On machines without an NVIDIA GPU, Piper is the recommended default.
+
+The product is a single Python script (`main.py`) with a rich terminal interface. It accepts PDF, EPUB, TXT, and Markdown files and produces one or more WAV audio parts that can be joined into a final MP3 or FLAC. User preferences (default engine/voice, output directory, audio quality, narration speed, pauses, split behaviour) are stored in `prefs.json` and editable from an in-app **Settings** menu.
 
 ---
 
@@ -51,6 +53,12 @@ The upstream project shipped four separate scripts that had to be run manually i
 | G8 | Work on Python 3.9–3.13, Windows, macOS (arm64), and Linux |
 | G9 | Provide a smart installer that handles PyTorch variant selection |
 | G10 | Exit gracefully on Ctrl-C or `q` — never show a raw traceback |
+| G11 | Offer a fast CPU-friendly engine (Piper) alongside XTTS, selectable at runtime |
+| G12 | Let users pick from multiple voices, with speed/quality trade-offs surfaced |
+| G13 | Persist user preferences (`prefs.json`) editable via an in-app Settings menu |
+| G14 | Configurable output directory and audio format/quality (MP3 128/192/320, FLAC) |
+| G15 | Support user-defined split points for every format (page/chapter/section/paragraph) |
+| G16 | Validate all config and inputs gracefully — never crash on bad values |
 
 ### Non-goals (v2.x)
 - GUI application (this is a terminal tool by design)
@@ -80,7 +88,7 @@ A single entry point (`python main.py`) presents a rich-styled CMD menu:
 
 ```
 ╔══════════════════════════════════════════════════════╗
-║           PdfToAudiobook  v2.2.0                     ║
+║           PdfToAudiobook  v2.3.0                     ║
 ║         Local AI Audiobook Generator                 ║
 ║       PDF · EPUB · TXT · Markdown                    ║
 ╚══════════════════════════════════════════════════════╝
@@ -88,7 +96,9 @@ A single entry point (`python main.py`) presents a rich-styled CMD menu:
   MAIN MENU
   ┌──────────────────────────────────────────────────┐
   │  [1]  Convert Book to Audiobook                  │
-  │  [2]  Join Audio Parts  →  MP3                   │
+  │  [2]  Join Audio Parts  →  Audiobook             │
+  │  [3]  Settings                                   │
+  │  [4]  Exit                                       │
   │                                                  │
   │  [q]  Quit                                       │
   └──────────────────────────────────────────────────┘
@@ -161,10 +171,19 @@ No files are written to the script directory itself.
 
 ### 5.5 User-defined audio split points (implemented)
 
-**Supported for:** PDF (by page number) and TXT (by paragraph number)  
-**Not applicable to:** EPUB, Markdown (single output file)
+Supported for **all formats**, with the split *unit* depending on format and prefs:
 
-After extraction the user is asked:
+| Format | Default unit | Alternate unit (prefs) |
+|--------|--------------|------------------------|
+| PDF | page number | — |
+| EPUB | chapter (`epub_split=chapter`) | paragraph/block (`epub_split=paragraph`) |
+| Markdown | heading section (`md_split=heading`) | paragraph/block (`md_split=paragraph`) |
+| TXT | paragraph | — |
+
+For Markdown, `md_heading_marker` controls section depth: `#` starts a new section
+only at top-level headings, `##` also at subsections, `###` also at sub-subsections.
+
+After extraction the user is asked (example for PDF):
 
 ```
   This PDF has 312 pages.
@@ -187,28 +206,36 @@ The resulting break points are saved to `generation_config.json` so a resumed se
 
 ### 5.6 TTS audio generation (implemented)
 
-**Model:** `tts_models/multilingual/multi-dataset/xtts_v2` (Coqui XTTS v2)  
-**Default speaker:** Adde Michal (Icelandic female voice)  
-**Default language:** English (`"en"`)  
-**First-run download:** ~1.8 GB (cached by Coqui's model manager)
+TTS is abstracted behind an **engine interface** (`PiperEngine` / `XttsEngine`),
+chosen at runtime (or via `default_engine` pref). Each engine exposes
+`chunks(text)`, `synth(text, path)`, and a `sample_rate`.
 
-**Text chunking:** Each text block is split into segments of ≤250 characters at sentence/clause/word boundaries before TTS synthesis, because XTTS v2 quality degrades on very long inputs.
+**Piper engine (default, fast):**
+- Library: `piper-tts` (self-contained `abi3` wheels; bundles its phonemizer)
+- Voices download on first use (~60 MB) to `~/.cache/pdftoaudiobook/piper`
+- Runs ~5–28× real-time on CPU depending on voice tier (see §5.13)
+- Handles long text internally — one synth call per block
+- Non-speakable blocks (blank lines, `---`, lone `#`) emit a valid silent WAV
 
-**Pause durations appended after each block:**
+**XTTS engine (highest quality, slow on CPU):**
+- Model: `tts_models/multilingual/multi-dataset/xtts_v2` (~1.8 GB first run)
+- Speaker: Adde Michal · Language: English
+- Text chunked to ≤120 chars (XTTS 400-token limit; auto-halves on overflow)
 
-| Block type | Pause |
-|---|---|
-| `header` | 1 000 ms |
-| `caption` | 500 ms |
-| `body` | 200 ms |
+**Narration speed** (`narration_speed` pref, 0.5–2.0) applies to both engines
+(Piper `length_scale`, XTTS `speed`).
+
+**Pause durations** after each block come from prefs
+(`pause_header_ms` / `pause_caption_ms` / `pause_body_ms`, default 1000/500/200).
 
 **Audio file architecture:**
 
-1. Each text block → temp WAV `_p01b0000.wav` (includes inter-chunk pauses via pydub)
+1. Each text block → temp WAV `_p01b0000.wav` (inter-chunk pauses via pydub)
 2. All block WAVs for a part → `part_01.wav` via `ffmpeg -c copy` (lossless, fast)
-3. All parts → `audiobook.mp3` via `ffmpeg libmp3lame` at 192 kbps
+3. All parts → `audiobook.mp3` (`libmp3lame`, 128/192/320 kbps) or `audiobook.flac`
 
-This architecture eliminates the "hundreds of tiny WAV joins" problem from the original project and produces a continuous, natural-sounding audio stream within each part.
+This eliminates the "hundreds of tiny WAV joins" problem from the original project
+and produces a continuous, natural-sounding stream within each part.
 
 ---
 
@@ -305,42 +332,112 @@ After installation, `ffmpeg` availability is checked and OS-specific install ins
 
 ---
 
+### 5.12 Preferences & Settings menu (implemented)
+
+User preferences live in `prefs.json` (next to `main.py`) and are editable from
+**main menu → [3] Settings**. Each setting is self-documented via an inline
+`_help` block in the file. The Settings menu shows every setting, its current
+value, and a description; users can edit any value, reset all to defaults, or go back.
+
+**Robust config handling:** invalid JSON is backed up (`prefs.json.bak`) and
+recreated with defaults; individual out-of-range/invalid values are reset to
+their default with a warning. Bad config never crashes the app.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `default_engine` | *(blank = ask)* | `piper` / `xtts` |
+| `default_voice` | *(blank = ask)* | Piper voice key |
+| `output_dir` | `output` | base output dir; blank = ask each run |
+| `audio_format` | `mp3` | `mp3` / `flac` |
+| `mp3_bitrate` | `192k` | `128k` / `192k` / `320k` |
+| `narration_speed` | `1.0` | 0.5–2.0 multiplier |
+| `auto_join` | `true` | auto-join parts when generation finishes |
+| `pause_header_ms` / `pause_caption_ms` / `pause_body_ms` | `1000`/`500`/`200` | per-block silence |
+| `epub_split` | `chapter` | `chapter` / `paragraph` |
+| `md_split` | `heading` | `heading` / `paragraph` |
+| `md_heading_marker` | `#` | section depth for MD heading splits |
+
+---
+
+### 5.13 TTS engines & voice selection (implemented)
+
+After break points, the user picks an **engine** (unless `default_engine` is set),
+and for Piper a **voice** (unless `default_voice` is set). The voice picker lists
+8 curated voices and accepts any Piper catalog key.
+
+Measured Piper speed on CPU (AMD Ryzen 7 6800H) by quality tier:
+
+| Tier | Sample rate | Speed | Quality |
+|------|-------------|-------|---------|
+| `low` | 16 kHz | ~28× real-time | fastest, lower fidelity |
+| `medium` | 22 kHz | ~22× real-time | balanced (recommended) |
+| `high` | 22 kHz | ~5× real-time | best, larger model |
+
+XTTS on the same CPU runs slower than real-time (RTF ≈ 2), i.e. even `high`-tier
+Piper is ~40× faster. The chosen engine/voice/speed are saved per book in
+`generation_config.json` so resumed audio stays consistent.
+
+---
+
+### 5.14 Configurable output directory (implemented)
+
+Output goes to `<output_dir>/<book name>/` (default `output/<book name>/`). If
+`output_dir` is blank, the user is prompted each run (default `output`). The base
+directory is created with **error handling**: permission errors and invalid/
+nonexistent paths produce a friendly message and return to the menu rather than a
+traceback. A write-probe confirms the directory is actually writable before
+generation begins.
+
+---
+
 ## 6. Technical Architecture
 
 ### 6.1 Component map
 
 ```
 main.py
+├── Preferences layer
+│   ├── PREFS_SCHEMA         Settings + defaults + validators + help text
+│   ├── load_prefs()         Validate/coerce prefs.json (graceful on bad config)
+│   └── save_prefs()         Write prefs.json with inline _help block
+│
 ├── UI layer
 │   ├── _banner()            Rich double-border header
 │   ├── _menu()              Numbered + [q] quit menu
 │   ├── _pick_file()         File browser + path input
+│   ├── ask_engine() / ask_piper_voice() / ask_output_dir() / ask_break_points()
 │   ├── _confirm_quit()      y/n confirmation for q / Ctrl-C
-│   └── _make_progress()     Shared progress bar factory
+│   ├── StackedProgress      Live label-above-bar display w/ smoothed ETA
+│   └── _make_progress()     Shared progress factory
 │
 ├── Extraction layer
 │   ├── _extract_pdf()       PyMuPDF → blocks with page + font_size
 │   ├── _classify_pdf()      Jenks breaks → other/caption/body/header labels
-│   ├── _extract_epub()      ebooklib + BeautifulSoup → labelled blocks
+│   ├── _extract_epub()      ebooklib + BeautifulSoup → blocks (+chapter)
 │   ├── _extract_txt()       Paragraph split → body blocks
-│   └── _extract_md()        Heading/paragraph parse → labelled blocks
+│   └── _extract_md()        Heading/paragraph parse → blocks (+heading_level)
 │
 ├── Grouping layer
+│   ├── _assign_units()      Per-block split unit (page/chapter/section/index)
+│   ├── _break_unit_info()   (total_units, unit_name) for the prompt
 │   └── _group_into_parts()  Split narrated blocks by user break points
 │
-├── TTS layer
-│   ├── _split_text()        250-char sentence-aware chunker
-│   └── generate_audio()     Two-level progress, per-block temp WAVs,
-│                            FFmpeg assembly per part
+├── TTS engine layer
+│   ├── PiperEngine          Fast engine (length_scale = speed); auto voice download
+│   ├── XttsEngine           XTTS v2 (120-char chunker, speed)
+│   ├── _load_engine()       Construct chosen engine w/ messaging + ImportError help
+│   └── generate_audio()     Two-level progress, per-block temp WAVs, FFmpeg assembly
 │
 ├── FFmpeg layer
-│   ├── _concat_wavs()       -c copy assembly (spinner only)
+│   ├── _concat_wavs()       -c copy assembly
 │   ├── _wav_duration_s()    stdlib wave duration reader
 │   └── _ffmpeg_progress()   -progress pipe:1 thread reader → live bar
 │
 └── Flow controllers
     ├── _flow_convert()      Full conversion pipeline
-    └── _flow_join()         Standalone join flow
+    ├── _flow_join()         Standalone join (mp3/flac, nested-dir scan)
+    ├── _flow_settings()     Edit prefs.json in-app
+    └── main()               Menu loop + per-flow error handling (error.log)
 ```
 
 ### 6.2 Data flow
@@ -371,16 +468,16 @@ ffmpeg libmp3lame 192k               →  audiobook.mp3
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `VERSION` | `"2.2.0"` | Shown in banner |
+| `VERSION` | `"2.3.0"` | Shown in banner |
 | `SUPPORTED_FORMATS` | `{".pdf", ".epub", ".txt", ".md"}` | File picker filter |
-| `PAUSES_MS["header"]` | `1000` | Silence after heading blocks |
-| `PAUSES_MS["caption"]` | `500` | Silence after caption blocks |
-| `PAUSES_MS["body"]` | `200` | Silence after body blocks |
+| `PAUSES_MS` | `1000/500/200` | Default per-block silence (overridable via prefs) |
+| `DEFAULT_PIPER_VOICE` | `"en_US-lessac-medium"` | Default Piper voice |
+| `PIPER_CACHE` | `~/.cache/pdftoaudiobook/piper` | Downloaded Piper voice models |
+| `PREFS_PATH` | `<app>/prefs.json` | User preferences file |
 | `MIN_FONT_SIZE` | `2` | PDF spans below this are ignored |
-| TTS chunk max | `250` chars | Input limit for XTTS v2 quality |
-| MP3 bitrate | `192k` | FFmpeg output quality |
-| TTS speaker | `"Adde Michal"` | Default XTTS v2 voice |
-| TTS language | `"en"` | Default narration language |
+| XTTS chunk max | `120` chars | Input limit for XTTS 400-token cap |
+| Default MP3 bitrate | `192k` | Overridable via prefs |
+| XTTS speaker / language | `"Adde Michal"` / `"en"` | XTTS defaults |
 
 ---
 
@@ -390,7 +487,8 @@ ffmpeg libmp3lame 192k               →  audiobook.mp3
 |---|---|---|
 | `PyMuPDF` (fitz) | PDF parsing | Table detection, font metadata |
 | `jenkspy` | Jenks natural breaks | PDF font-size classification |
-| `torch` | Deep learning runtime | Must install before `coqui-tts`; CUDA/MPS/CPU variant selected by `install.py` |
+| `piper-tts` | Piper TTS engine (default) | Self-contained `abi3` wheels; bundles phonemizer; pulls `onnxruntime` |
+| `torch` | Deep learning runtime | XTTS only; install before `coqui-tts`; CUDA/MPS/CPU variant selected by `install.py` |
 | `torchaudio` | Audio I/O for torch | Must match torch version |
 | `transformers` `>=4.40,<5.0` | Transformer models | Pinned to 4.x; coqui-tts uses `isin_mps_friendly` removed in v5 |
 | `coqui-tts[codec]` | XTTS v2 TTS engine | Community fork of abandoned Coqui TTS; `[codec]` pulls in `torchcodec` |
@@ -421,15 +519,15 @@ ffmpeg libmp3lame 192k               →  audiobook.mp3
 
 | File | Purpose |
 |---|---|
-| `main.py` | Entire application — extraction, TTS, joining, UI |
+| `main.py` | Entire application — extraction, TTS engines, joining, settings, UI |
 | `install.py` | Smart cross-platform setup script |
 | `requirements.txt` | Python dependencies (excludes torch; see install.py) |
+| `prefs.json` | User preferences (git-ignored; auto-created with `_help` block) |
 | `TODO.md` | Developer task tracking |
 | `PRD.md` | This document |
-| `extract_text.py` | Legacy — superseded by `main.py` (pending deletion) |
-| `classify.py` | Legacy — superseded by `main.py` (pending deletion) |
-| `tts.py` | Legacy — superseded by `main.py` (pending deletion) |
-| `join_audios.py` | Legacy — superseded by `main.py` (pending deletion) |
+
+Legacy scripts (`extract_text.py`, `classify.py`, `tts.py`, `join_audios.py`) were
+**removed in v2.3** — all functionality lives in `main.py`.
 
 ---
 
@@ -439,8 +537,8 @@ ffmpeg libmp3lame 192k               →  audiobook.mp3
 |---|---|---|---|
 | L1 | macOS Intel unsupported | High | `torchcodec` has no macOS x86_64 wheels |
 | L2 | `transformers<5.0` pin | Medium | `isin_mps_friendly` removed in v5; will conflict if another package requires v5 |
-| L3 | Speaker/language hardcoded | Medium | Defaults to Adde Michal / English; requires source edit to change |
-| L4 | No TTS chunk-size setting | Low | Hardcoded 250 chars; some languages may need different values |
+| L3 | XTTS speaker/language hardcoded | Low | Piper now has full voice selection; XTTS still fixed to Adde Michal / English (OQ6) |
+| L4 | No TTS chunk-size setting | Low | XTTS hardcoded 120 chars; Piper chunks per block internally |
 | L5 | EPUB chapter order | Low | Relies on spine order from `ebooklib`; some EPUBs use `<guide>` reordering |
 | L6 | `pymupdf_layout` notice | Cosmetic | PyMuPDF prints an advisory about installing `pymupdf_layout`; does not affect output |
 | L7 | Part-level resume only for interrupted parts | Low | If interrupted mid-part, the whole part restarts (block-level resume works within a session) |
@@ -450,17 +548,18 @@ ffmpeg libmp3lame 192k               →  audiobook.mp3
 
 ## 11. Roadmap
 
-### v2.3 — Polish & settings
-- [ ] Delete legacy scripts (`extract_text.py`, `classify.py`, `tts.py`, `join_audios.py`)
-- [ ] Update `README.md` to reflect single-script workflow
-- [ ] Settings menu (option [3] before Exit):
-  - Speaker voice selection from available XTTS voices
-  - Narration language (`"en"`, `"es"`, `"fr"`, etc.)
-  - Max TTS chunk length (default 250)
-  - PDF minimum font size (default 2)
-  - Pause durations (header / caption / body)
-- [ ] Persist settings to `~/.config/pdftoaudiobook/settings.json`
+### v2.3 — Engines, voices & settings (shipped)
+- [x] Add Piper as a fast, CPU-friendly engine alongside XTTS (runtime choice)
+- [x] Voice selection — 8 curated Piper voices + any catalog key
+- [x] Settings menu (option [3]) backed by `prefs.json` with inline `_help`
+- [x] Configurable output directory (`output/<book>/`) with error handling
+- [x] Configurable audio format/quality (MP3 128/192/320, FLAC)
+- [x] Narration speed and per-block pause durations as prefs
+- [x] User-defined split points for EPUB (chapter) and Markdown (heading section)
+- [x] Graceful config validation — bad values reset, no crashes
+- [x] Delete legacy scripts; rewrite `README.md`
 - [ ] Suppress the `pymupdf_layout` advisory message
+- [ ] Narration language pref for XTTS (OQ6)
 
 ### v2.4 — Format & processing
 - [ ] Word document (`.docx`) support via `python-docx`
@@ -512,12 +611,19 @@ pip install -r requirements.txt
 
 ---
 
-## 13. Open Questions
+## 13. Resolved Decisions (v2.3)
+
+| # | Question | Decision |
+|---|---|---|
+| OQ1 | Keep or delete the legacy scripts? | **Deleted** in v2.3. All functionality is in `main.py`. |
+| OQ2 | Fixed default voice, or prompt for selection? | **Prompt by default.** `default_voice` (and `default_engine`) prefs can pre-set a choice to skip the prompt; blank = always ask. Voice selection added (8 curated + any catalog key). |
+| OQ3 | Output beside input, or a configurable directory? | **Configurable `output_dir` pref**, default `output/`. A per-book subfolder is created inside it. Blank = prompt each run. Includes permission/invalid-path error handling. |
+| OQ4 | Fixed 192 kbps MP3, or user choice? | **Configurable.** `audio_format` (`mp3`/`flac`) and `mp3_bitrate` (`128k`/`192k`/`320k`) prefs; default 192 kbps MP3. All config is validated (out-of-bounds values reset to defaults with a warning, no crash). |
+| OQ5 | Break points for EPUB/Markdown too? | **Yes.** EPUB splits by chapter (or paragraph), Markdown by heading section (or paragraph), with a configurable `md_heading_marker` for section depth. See §5.5. |
+
+### Remaining open questions
 
 | # | Question | Owner | Status |
 |---|---|---|---|
-| OQ1 | Should the legacy scripts be kept indefinitely for reference, or deleted after v2.3 is confirmed stable? | @aidanlenahan | Open |
-| OQ2 | Is Adde Michal the right default voice for all users, or should the first-run setup prompt for voice selection? | @aidanlenahan | Open |
-| OQ3 | Should the output folder be next to the input file (current) or always in a configurable output directory? | @aidanlenahan | Open |
-| OQ4 | Is 192 kbps MP3 the right quality target, or should the user be able to choose (128 / 192 / 320 / FLAC)? | @aidanlenahan | Open |
-| OQ5 | Should EPUB and Markdown also support user-defined break points, or is a single output file acceptable? | @aidanlenahan | Open |
+| OQ6 | Should narration language (non-English) be exposed as a pref / per-voice for XTTS? | @aidanlenahan | Open |
+| OQ7 | Should `prefs.json` live next to `main.py` (current) or in a per-user config dir (`~/.config`)? | @aidanlenahan | Open |

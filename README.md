@@ -1,76 +1,117 @@
-# Simple PDF to Audiobook
+# PdfToAudiobook
 
-This project converts PDF books into **AI-narrated audiobooks** using [Coqui-TTS](https://github.com/idiap/coqui-ai-TTS) (fork), PyMuPDF and jenkspy. Everything is done
-locally so there is no need for api keys, credits, etc.
+Convert **PDF, EPUB, TXT, and Markdown** books into **AI-narrated audiobooks** —
+entirely locally. No API keys, no credits, no cloud.
 
-The workflow is very simple but it will improve in the future — if you’re not afraid of tweaking a bit of code, you’ll have no problem.
-
-For now only PDFs are accepted but I may implement support for EPUB.
+A single menu-driven script handles everything: pick a file, choose a voice,
+split into parts where you want, generate, and join into one MP3 or FLAC.
 
 ---
 
-## 🚀 How to use it
+## ✨ Features
 
-1. **Extract text from the PDF**
-   ```bash
-   python extract_text.py
-   ```
+- **Two TTS engines, chosen at runtime**
+  - **Piper** — fast neural TTS; runs *several times faster than real-time* on CPU.
+    The right choice when you don't have an NVIDIA GPU.
+  - **XTTS v2** (Coqui) — highest quality / most natural, but slow on CPU.
+- **8 curated Piper voices** (US/GB, male/female) plus any voice key from the
+  [Piper catalog](https://huggingface.co/rhasspy/piper-voices). Voices download
+  on first use and are cached.
+- **User-defined split points** for every format — by page (PDF), chapter (EPUB),
+  heading section (Markdown), or paragraph (TXT).
+- **Resume** — interrupt any time (Ctrl-C or `q`); rerun to continue where you left off.
+- **Live progress** with smoothed ETA and estimated output size for every step.
+- **Preferences** (`prefs.json`) editable in-app via the **Settings** menu —
+  default voice/engine, output directory, audio format & quality, narration
+  speed, pause lengths, and how EPUB/MD are split.
+- **Join** parts into a single `audiobook.mp3` (128/192/320 kbps) or `audiobook.flac`.
 
-- The script opens `book.pdf` (the PDF must have this name).
-- It generates a file `vision_output.json` containing the text blocks and their font sizes.
-1. **Classify text blocks**
-    
-    ```bash
-    python classify.py
-    ```
-    
-    - Uses **Jenks natural breaks** to classify text as:
-        - `header` (titles),
-        - `body` (main content),
-        - `caption` (subtitles),
-        - `other` (things to skip, e.g. page numbers).
-    - Saves the result as `classified_text.json`.
-2. **Generate audio with Coqui-TTS**
-    
-    ```bash
-    python tts.py
-    ```
-    
-    - Converts each block from `classified_text.json` into audio.
-    - Produces **one WAV file per block** inside the `temp/` folder.
-    
-    👉 If you stop synthesis halfway through, it’s fine:
-    
-    all previously generated blocks remain in `temp/`, and you can continue from there.
-    
-3. **Join the audio files**
-    
-    ```bash
-    python join_audios.py
-    
-    ```
-    
-    - Concatenates all `.wav` files from `temp/` into a single final `audiobook.mp3` using **FFmpeg**.
+---
+
+## 🚀 Quick start
+
+```bash
+# 1. Install (auto-detects OS/GPU and installs the right PyTorch for XTTS)
+python install.py
+
+# 2. Run
+python main.py
+```
+
+Then in the menu:
+
+1. **Convert Book to Audiobook** — pick your file, choose where to split, pick an
+   engine/voice, and let it generate. You'll be offered (or auto-)joined output.
+2. **Join Audio Parts → Audiobook** — combine an existing folder's parts into one file.
+3. **Settings** — edit preferences (see below).
+
+Put your book file in the folder you run `main.py` from (or type a full path).
+Output goes to `output/<book name>/` by default.
+
+---
+
+## ⚙️ Settings (`prefs.json`)
+
+Open **Settings** from the main menu, or edit `prefs.json` directly (each setting
+is documented inline in the file's `_help` block). Invalid values are safely
+reset to defaults — bad config never crashes the app.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `default_engine` | *(blank)* | `piper`/`xtts`, or blank to be asked each run |
+| `default_voice` | *(blank)* | a Piper voice key, or blank to be asked each run |
+| `output_dir` | `output` | where audiobook folders are created; blank = ask each run |
+| `audio_format` | `mp3` | `mp3` or `flac` for the joined file |
+| `mp3_bitrate` | `192k` | `128k` / `192k` / `320k` (ignored for FLAC) |
+| `narration_speed` | `1.0` | speed multiplier, 0.5–2.0 (0.9 slower, 1.15 faster) |
+| `auto_join` | `true` | auto-join parts when generation finishes |
+| `pause_header_ms` / `pause_caption_ms` / `pause_body_ms` | `1000`/`500`/`200` | silence after each block type |
+| `epub_split` | `chapter` | EPUB split unit: `chapter` or `paragraph` |
+| `md_split` | `heading` | Markdown split unit: `heading` or `paragraph` |
+| `md_heading_marker` | `#` | section depth for MD heading splits (`#`=top-level only, `###`=also sub-subsections) |
+
+A per-book subfolder (named after the file) is always created inside `output_dir`.
+
+---
+
+## 🎙️ Choosing a voice & engine
+
+On CPU (no NVIDIA GPU), **Piper is dramatically faster** — roughly 5–28× real-time
+depending on the voice tier, versus XTTS at slower-than-real-time. Piper tiers:
+
+| Tier | Sample rate | Speed (CPU) | Quality |
+|------|------------|-------------|---------|
+| `low` | 16 kHz | ~28× real-time | fastest, lower fidelity |
+| `medium` | 22 kHz | ~22× real-time | **balanced (recommended)** |
+| `high` | 22 kHz | ~5× real-time | best, larger model |
+
+Within a tier, voices run at the same speed — pick by how they sound.
 
 ---
 
 ## 📦 Dependencies
 
-You’ll need these libraries and tools installed:
+`python install.py` handles everything. Manual install:
 
-- [**FFmpeg**](https://ffmpeg.org/) (make sure it’s in your PATH)
-- [**Coqui-TTS (fork)**](https://coqui-tts.readthedocs.io/)
-- [**PyMuPDF**](https://pymupdf.readthedocs.io/) (`pip install PyMuPDF`)
-- [**jenkspy**](https://pypi.org/project/jenkspy/) (`pip install jenkspy`)
-- [**Pydub**](https://pypi.org/project/pydub/)
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu  # for XTTS
+pip install -r requirements.txt
+```
+
+You also need [**FFmpeg**](https://ffmpeg.org/) on your `PATH` (used for joining).
+
+Core libraries: `piper-tts`, `coqui-tts`, `PyMuPDF`, `jenkspy`, `ebooklib`,
+`beautifulsoup4`, `pydub`, `rich`.
 
 ---
 
 ## ⚠️ Notes
 
-- The input PDF must be named **`book.pdf`** and placed in the project folder.
-- For now the pipeline is very **basic and experimental**. If you don’t mind tweaking some code, you can adjust things like:
-    - The page ranges to process.
-    - The thresholds for text classification.
-    - The voice or language in Coqui-TTS.
-- If the book is long, the audio is split into small blocks (`temp/block_X.wav`) so you don’t lose progress. You can edit the `tts.py` file to skip blocks you have already processed.
+- **First run downloads models**: a Piper voice (~60 MB) or XTTS (~1.8 GB).
+- **Resuming**: generation saves progress per block. Stop with Ctrl-C or `q` and
+  rerun — it skips finished parts and continues. The engine/voice/speed are saved
+  per book so resumed audio stays consistent.
+- **GPU**: XTTS uses CUDA automatically if available. AMD/integrated GPUs and
+  macOS Intel aren't supported for XTTS — use Piper there.
+- `output/`, `prefs.json`, and `error.log` are git-ignored. If something
+  unexpected happens, the full traceback is written to `error.log`.
