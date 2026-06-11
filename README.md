@@ -45,8 +45,16 @@ Then in the menu:
 2. **Join Audio Parts → Audiobook** — combine an existing folder's parts into one file.
 3. **Settings** — edit preferences (see below).
 
-Put your book file in the folder you run `main.py` from (or type a full path).
-Output goes to `output/<book name>/` by default.
+Drop your book files in the **`input/`** folder (created automatically on first
+run) — the file picker lists them there. You can also type a full path to any
+file. Output goes to **`output/<book name>/`** by default.
+
+On first launch you'll see *"No user preferences detected — starting from
+scratch"*, and a default `prefs.json` is created for you.
+
+The default `input/` and `output/` folders are created automatically if missing.
+If you point `input_dir`/`output_dir` at a **custom** folder that doesn't exist,
+you'll get a clear error instead (it won't be silently created).
 
 ---
 
@@ -60,6 +68,7 @@ reset to defaults — bad config never crashes the app.
 |---------|---------|---------|
 | `default_engine` | *(blank)* | `piper`/`xtts`, or blank to be asked each run |
 | `default_voice` | *(blank)* | a Piper voice key, or blank to be asked each run |
+| `input_dir` | `input` | where the file picker looks for books; blank = `input/` |
 | `output_dir` | `output` | where audiobook folders are created; blank = ask each run |
 | `audio_format` | `mp3` | `mp3` or `flac` for the joined file |
 | `mp3_bitrate` | `192k` | `128k` / `192k` / `320k` (ignored for FLAC) |
